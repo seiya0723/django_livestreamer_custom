@@ -6,4 +6,4 @@ media
 venv
 *.swp
 __pycache__
-*.jpg
+frame_*.jpg
