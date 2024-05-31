@@ -1,21 +1,23 @@
 from django.shortcuts import render,redirect
 
 from django.views import View
-from .models import Topic
+#from .models import Topic
 
 class IndexView(View):
 
     def get(self, request, *args, **kwargs):
 
-        topics  = Topic.objects.all()
-        context = { "topics":topics }
+        #topics  = Topic.objects.all()
+        #context = { "topics":topics }
 
-        return render(request,"bbs/index.html",context)
+        return render(request,"bbs/index.html")
 
     def post(self, request, *args, **kwargs):
 
+        """
         posted  = Topic( comment = request.POST["comment"] )
         posted.save()
+        """
 
         return redirect("bbs:index")
 
@@ -86,7 +88,13 @@ def detect_motion(frameCount):
 # 最新のフレームをjpgに変換して返却している
 def generate():
     global outputFrame, lock
+
+    total = 0
+
     while True:
+
+        #start   = time.time()
+
         with lock:
             if outputFrame is None:
                 continue
@@ -94,15 +102,16 @@ def generate():
             if not flag:
                 continue
 
+        #diff    = time.time() - start
+        #print(diff)
+
         # yield the output frame in the byte format
         yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
-
 
 # jpgデータを配信している
 class StreamView(View):
     def get(self, request, *args, **kwargs):
         return StreamingHttpResponse(generate(), content_type="multipart/x-mixed-replace; boundary=frame")
-
 
 # サーバー稼働とストリーミング配信処理を並列に実行する
 t           = threading.Thread(target=detect_motion, args=(32,))
