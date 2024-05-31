@@ -34,6 +34,7 @@ import time
 import datetime
 import imutils
 import cv2
+import os 
 
 # 最新のフレームが入る変数
 outputFrame     = None
@@ -50,8 +51,8 @@ def detect_motion(frameCount):
     global vs, outputFrame, lock
 
     # 動体検知処理を動かす
-    #md      = SingleMotionDetector(accumWeight=0.1)
-    #total   = 0
+    md      = SingleMotionDetector(accumWeight=0.1)
+    total   = 0
 
     while True:
 
@@ -60,26 +61,24 @@ def detect_motion(frameCount):
         frame       = imutils.resize(frame, width=400)
 
         # グレースケールとぼかしを掛ける(動体検知の高速化)
-        #gray        = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        #gray        = cv2.GaussianBlur(gray, (7, 7), 0)
+        gray        = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray        = cv2.GaussianBlur(gray, (7, 7), 0)
 
         # 現在の時刻を表示している
-        #timestamp   = datetime.datetime.now()
-        #cv2.putText(frame, timestamp.strftime("%A %d %B %Y %I:%M:%S%p"), (10, frame.shape[0] - 10),cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
+        timestamp   = datetime.datetime.now()
+        cv2.putText(frame, timestamp.strftime("%A %d %B %Y %I:%M:%S%p"), (10, frame.shape[0] - 10),cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
 
         # ここで囲みをつけている
-        """
         if total > frameCount:
             motion = md.detect(gray)
             if motion is not None:
                 (thresh, (minX, minY, maxX, maxY)) = motion
                 cv2.rectangle(frame, (minX, minY), (maxX, maxY),(0, 0, 255), 2)
-        """
 
         # 動体検知機にフレームを更新する
-        #md.update(gray)
+        md.update(gray)
 
-        #total += 1
+        total += 1
         with lock:
             # 最新のフレームをコピーする
             outputFrame = frame.copy()
@@ -93,7 +92,7 @@ def generate():
 
     while True:
 
-        #start   = time.time()
+        start   = time.time()
 
         with lock:
             if outputFrame is None:
@@ -102,11 +101,21 @@ def generate():
             if not flag:
                 continue
 
-        #diff    = time.time() - start
-        #print(diff)
+        total += 1
+
+        if total < 30:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")
+            filename = os.path.join(f"frame_{timestamp}.jpg")
+            with open(filename, "wb") as f:
+                f.write(encodedImage)
+
+            diff    = time.time() - start
+            print(f"{diff * 1000}ミリ秒")
 
         # yield the output frame in the byte format
         yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
+
+
 
 # jpgデータを配信している
 class StreamView(View):
