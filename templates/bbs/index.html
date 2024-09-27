@@ -9,6 +9,8 @@
 <body>
 
     <main class="container">
+
+        {% comment %}
         {# ここが投稿用フォーム #}
         <form method="POST">
             {% csrf_token %}
@@ -22,10 +24,26 @@
             {{ topic.comment }}
         </div>
         {% endfor %}
+        {% endcomment %}
 
 
+        {# ===========ライブ配信================= #}
 
+    
+        <form action="{% url 'bbs:video_control' %}" method="post">
+            {% csrf_token %}
+
+            {% if is_active %}
+            <input type="submit" value="OFFにする">
+            {% else %}
+            <input type="submit" value="ONにする">
+            {% endif %}
+        </form>
+
+
+        {% if is_active %}
         <img src="{% url 'bbs:stream' %}">
+        {% endif %}
 
 
 

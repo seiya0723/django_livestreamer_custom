@@ -1,63 +1,90 @@
 from django.shortcuts import render,redirect
-
 from django.views import View
-#from .models import Topic
 
-class IndexView(View):
+from .detector import SingleMotionDetector
 
-    def get(self, request, *args, **kwargs):
 
-        #topics  = Topic.objects.all()
-        #context = { "topics":topics }
+from imutils.video import VideoStream
+from django.http import StreamingHttpResponse
 
-        return render(request,"bbs/index.html")
+import os 
+import cv2
+import time
+import imutils
+import datetime
+import threading
 
+
+# 最新のフレームが入る変数
+OUTPUT_FRAME     = None
+
+# スレッド間でのフレームの読み書きを制御するためのロック
+LOCK            = threading.Lock()
+
+# カメラ関係
+VS = None
+THREAD = None
+STOP_EVENT = None
+
+# カメラの起動・停止を制御
+class VideoControlView(View):
     def post(self, request, *args, **kwargs):
 
-        """
-        posted  = Topic( comment = request.POST["comment"] )
-        posted.save()
-        """
+        global VS, THREAD, STOP_EVENT
 
+        if VS is None:
+            VS = VideoStream(src=0).start()
+            time.sleep(2)
+
+            STOP_EVENT = threading.Event()
+            THREAD = threading.Thread(target=detect_motion, args=(32,))
+            THREAD.daemon = True
+            THREAD.start()
+
+        else:
+            STOP_EVENT.set()
+            THREAD.join()
+            VS.stop()
+            VS = None
+
+        return redirect("bbs:index")
+
+video_control = VideoControlView.as_view()
+
+
+# トップページ
+class IndexView(View):
+    def get(self, request, *args, **kwargs):
+        global VS
+
+        context = {}
+
+        if VS is None:
+            context["is_active"] = False
+        else:
+            context["is_active"] = True
+
+        return render(request,"bbs/index.html", context)
+
+    def post(self, request, *args, **kwargs):
         return redirect("bbs:index")
 
 index   = IndexView.as_view()
 
 
-
-from .detector import SingleMotionDetector
-from imutils.video import VideoStream
-from django.http import StreamingHttpResponse
-
-import threading
-import time
-import datetime
-import imutils
-import cv2
-import os 
-
-# 最新のフレームが入る変数
-outputFrame     = None
-
-# スレッド間でのフレームの読み書きを制御するためのロック
-lock            = threading.Lock()
-
-# カメラを起動させる(このカメラの起動を任意のタイミングにすることで、使っていないときはOFFにできるのでは？)
-vs              = VideoStream(src=0).start()
-time.sleep(2.0)
-
 # カメラからフレームを読み取り、動体検知処理をする
 def detect_motion(frameCount):
-    global vs, outputFrame, lock
+    global VS, OUTPUT_FRAME, LOCK, STOP_EVENT
 
     # 動体検知処理を動かす
     md      = SingleMotionDetector(accumWeight=0.1)
     total   = 0
 
-    while True:
+    while not STOP_EVENT.is_set():
+
 
         # カメラを読み込みして、リサイズする。
-        frame       = vs.read()
+        frame       = VS.read()
         frame       = imutils.resize(frame, width=400)
 
         # グレースケールとぼかしを掛ける(動体検知の高速化)
@@ -79,14 +106,14 @@ def detect_motion(frameCount):
         md.update(gray)
 
         total += 1
-        with lock:
+        with LOCK:
             # 最新のフレームをコピーする
-            outputFrame = frame.copy()
+            OUTPUT_FRAME = frame.copy()
 
 
 # 最新のフレームをjpgに変換して返却している
 def generate():
-    global outputFrame, lock
+    global OUTPUT_FRAME, LOCK
 
     total = 0
 
@@ -94,15 +121,17 @@ def generate():
 
         start   = time.time()
 
-        with lock:
-            if outputFrame is None:
+        with LOCK:
+            if OUTPUT_FRAME is None:
                 continue
-            (flag, encodedImage) = cv2.imencode(".jpg", outputFrame)
+            (flag, encodedImage) = cv2.imencode(".jpg", OUTPUT_FRAME)
             if not flag:
                 continue
 
         total += 1
 
+        # 画像の保存
+        """
         if total < 30:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")
             filename = os.path.join(f"frame_{timestamp}.jpg")
@@ -111,10 +140,10 @@ def generate():
 
             diff    = time.time() - start
             print(f"{diff * 1000}ミリ秒")
+        """
 
         # yield the output frame in the byte format
         yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
-
 
 
 # jpgデータを配信している
@@ -122,11 +151,5 @@ class StreamView(View):
     def get(self, request, *args, **kwargs):
         return StreamingHttpResponse(generate(), content_type="multipart/x-mixed-replace; boundary=frame")
 
-# サーバー稼働とストリーミング配信処理を並列に実行する
-t           = threading.Thread(target=detect_motion, args=(32,))
-t.daemon    = True
-t.start()
-
 stream   = StreamView.as_view()
-
 
