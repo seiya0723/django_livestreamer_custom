@@ -1,148 +1,131 @@
 from django.shortcuts import render,redirect
 from django.views import View
 
-from .detector import SingleMotionDetector
-
-
 from imutils.video import VideoStream
 from django.http import StreamingHttpResponse
 
+import imutils
 import os 
 import cv2
 import time
-import imutils
-import datetime
 import threading
 
+# ウェブカメラの動作を管理するクラス。
+class CameraManager:
+    def __init__(self):
+        self.vs             = None
+        self.thread         = None
+        self.stop_event     = threading.Event()
+        self.lock           = threading.Lock()
+        self.output_frame   = None
 
-# 最新のフレームが入る変数
-OUTPUT_FRAME     = None
+    def start(self):
+        with self.lock:
+            if self.vs is not None:
+                return
 
-# スレッド間でのフレームの読み書きを制御するためのロック
-LOCK            = threading.Lock()
+            # ここのUSBカメラ番号指定はコンストラクタで引数を受け取るように
+            self.vs = VideoStream(src=0).start()
+            #time.sleep(1)
 
-# カメラ関係
-VS = None
-THREAD = None
-STOP_EVENT = None
+            self.stop_event.clear()
+            self.thread = threading.Thread(target=self._capture_loop)
+            self.thread.daemon = True
+            self.thread.start()
 
-# カメラの起動・停止を制御
-class VideoControlView(View):
-    def post(self, request, *args, **kwargs):
+    def stop(self):
+        with self.lock:
+            if self.vs is None:
+                return
 
-        global VS, THREAD, STOP_EVENT
+            # ここで停止指示を出しても停止しないので、タイムアウトを用意して停止している。
+            self.stop_event.set()
+            
+            self.thread.join(timeout=0.1)
 
-        if VS is None:
-            VS = VideoStream(src=0).start()
-            time.sleep(2)
+            """
+            if self.thread and self.thread.is_alive():
+                self.thread.join(timeout=0.1)
+                print("0.1秒経った")
+            """
 
-            STOP_EVENT = threading.Event()
-            THREAD = threading.Thread(target=detect_motion, args=(32,))
-            THREAD.daemon = True
-            THREAD.start()
+            print("終了")
 
-        else:
-            STOP_EVENT.set()
-            THREAD.join()
-            VS.stop()
-            VS = None
+            self.vs.stop()
+            self.vs = None
+            self.output_frame = None
 
-        return redirect("bbs:index")
+    def get_frame(self):
+        with self.lock:
+            return self.output_frame
 
-video_control = VideoControlView.as_view()
+    def _capture_loop(self):
+
+        # ここで停止指示を受けてもループを続けてしまう？
+        while not self.stop_event.is_set():
+            frame = self.vs.read()
+
+            # カメラのフレームが取得できない場合は停止
+            if frame is None:
+                break
+
+            # リサイズ
+            frame = imutils.resize(frame, width=400)
+            with self.lock:
+                self.output_frame = frame.copy()
+
+            print("キャプチャーしています。")
+
+
+# ウェブカメラの管理をグローバル化して、すべてのビューでウェブカメラの起動と停止ができるようにしている。
+camera_manager = CameraManager()
 
 
 # トップページ
 class IndexView(View):
     def get(self, request, *args, **kwargs):
-        global VS
+        global camera_manager
 
         context = {}
 
-        if VS is None:
+        if camera_manager.vs is None:
             context["is_active"] = False
         else:
             context["is_active"] = True
 
         return render(request,"bbs/index.html", context)
 
-    def post(self, request, *args, **kwargs):
-        return redirect("bbs:index")
-
 index   = IndexView.as_view()
 
 
-# カメラからフレームを読み取り、動体検知処理をする
-def detect_motion(frameCount):
-    global VS, OUTPUT_FRAME, LOCK, STOP_EVENT
+# ウェブカメラの起動と停止をするビュー
+class VideoControlView(View):
+    def post(self, request, *args, **kwargs):
 
-    # 動体検知処理を動かす
-    md      = SingleMotionDetector(accumWeight=0.1)
-    total   = 0
+        if camera_manager.vs is None:
+            camera_manager.start()
+        else:
+            camera_manager.stop()
 
-    while not STOP_EVENT.is_set():
+        return redirect("bbs:index")
 
-
-        # カメラを読み込みして、リサイズする。
-        frame       = VS.read()
-        frame       = imutils.resize(frame, width=400)
-
-        # グレースケールとぼかしを掛ける(動体検知の高速化)
-        gray        = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray        = cv2.GaussianBlur(gray, (7, 7), 0)
-
-        # 現在の時刻を表示している
-        timestamp   = datetime.datetime.now()
-        cv2.putText(frame, timestamp.strftime("%A %d %B %Y %I:%M:%S%p"), (10, frame.shape[0] - 10),cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
-
-        # ここで囲みをつけている
-        if total > frameCount:
-            motion = md.detect(gray)
-            if motion is not None:
-                (thresh, (minX, minY, maxX, maxY)) = motion
-                cv2.rectangle(frame, (minX, minY), (maxX, maxY),(0, 0, 255), 2)
-
-        # 動体検知機にフレームを更新する
-        md.update(gray)
-
-        total += 1
-        with LOCK:
-            # 最新のフレームをコピーする
-            OUTPUT_FRAME = frame.copy()
+video_control = VideoControlView.as_view()
 
 
 # 最新のフレームをjpgに変換して返却している
 def generate():
-    global OUTPUT_FRAME, LOCK
 
-    total = 0
+    global camera_manager
 
     while True:
-
-        start   = time.time()
-
-        with LOCK:
-            if OUTPUT_FRAME is None:
+        with camera_manager.lock:
+            if camera_manager.output_frame is None:
                 continue
-            (flag, encodedImage) = cv2.imencode(".jpg", OUTPUT_FRAME)
+            (flag, encodedImage) = cv2.imencode(".jpg", camera_manager.output_frame)
             if not flag:
                 continue
 
-        total += 1
-
-        # 画像の保存
-        """
-        if total < 30:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")
-            filename = os.path.join(f"frame_{timestamp}.jpg")
-            with open(filename, "wb") as f:
-                f.write(encodedImage)
-
-            diff    = time.time() - start
-            print(f"{diff * 1000}ミリ秒")
-        """
-
-        # yield the output frame in the byte format
+        # バイナリでyieldを返す。
         yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
 
 
