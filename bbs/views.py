@@ -15,7 +15,15 @@ class CameraManager:
     def __init__(self):
         self.vs             = None
         self.thread         = None
+
+        # TIPS: threading.Event() は他のスレッドに何かしらの合図を送りたいときに使う。フラグ変数のようなもの。
+        #       .set()    : フラグを立てる(Trueにする)
+        #       .clear()  : フラグを下ろす(Falseにする)
+        #       .is_set() : フラグをチェックする(TrueかFalseか)
         self.stop_event     = threading.Event()
+
+        # TIPS: threading.Lock() は 複数のスレッドで同一のデータにアクセスしないようにするための仕組み
+        #       with self.lock: を使えば排他制御できる。
         self.lock           = threading.Lock()
         self.output_frame   = None
 
@@ -99,6 +107,8 @@ class VideoControlView(View):
         return redirect("bbs:index")
 
 video_control = VideoControlView.as_view()
+
+
 
 
 # 最新のフレームをjpgに変換して返却している
