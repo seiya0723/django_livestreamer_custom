@@ -40,24 +40,13 @@ class CameraManager:
 
             # ここで停止指示を出しても停止しないので、タイムアウトを用意して停止している。
             self.stop_event.set()
-            
             self.thread.join(timeout=0.1)
-
-            """
-            if self.thread and self.thread.is_alive():
-                self.thread.join(timeout=0.1)
-                print("0.1秒経った")
-            """
-
             print("終了")
 
             self.vs.stop()
             self.vs = None
             self.output_frame = None
 
-    def get_frame(self):
-        with self.lock:
-            return self.output_frame
 
     def _capture_loop(self):
 
